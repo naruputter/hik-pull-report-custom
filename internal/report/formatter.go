@@ -4,48 +4,44 @@ import (
 	"fmt"
 	"hik-export/internal/device"
 	"log"
+	"strings"
 	"time"
 )
 
+const (
+	TimeFormat = "20060102-15:04"
+)
+
 // EventToText converts a device event into a formatted text line.
-// You can adjust this format based on your requirements.
 func EventToText(event device.Event) string {
-	// Fallback handlers if fields are empty
-	name := event.Name
-	if name == "" {
-		name = "N/A"
-	}
-
-	cardNo := event.CardNo
-	if cardNo == "" {
-		cardNo = "N/A"
-	}
-
 	employeeNoString := event.EmployeeNoString
 	if employeeNoString == "" {
 		employeeNoString = "N/A"
 	}
 
-	verifyMode := event.CurrentVerifyMode
-	if verifyMode == "" {
-		verifyMode = fmt.Sprintf("M%d/m%d", event.Major, event.Minor)
-	}
-
-	// i want format  cardNo YYYY MM DD HH MM
-	// event.Time is RFC3339 format
-
-	// parse event.Time to time.Time
 	eventTime, err := time.Parse(time.RFC3339, event.Time)
 	if err != nil {
 		log.Printf("Error parsing time: %v", err)
 		return ""
 	}
 
-	// format eventTime to YYYY MM DD HH MM
-	formattedTime := eventTime.Format("2006-01-02 15:04")
+	formattedTime := eventTime.Format(TimeFormat)
 
-	return fmt.Sprintf("%s %s\n",
+	return fmt.Sprintf("%s-%s\n",
 		employeeNoString,
 		formattedTime,
 	)
+}
+
+// ParseLineToTime extracts the timestamp from a report line.
+// Assumes format: [EmployeeID]-[YYYYMMDD]-[HH:MM]
+func ParseLineToTime(line string) (time.Time, error) {
+	cleanLine := strings.TrimSpace(line)
+	// The time part always has a fixed length: YYYYMMDD-HH:MM = 14 chars
+	if len(cleanLine) < 14 {
+		return time.Time{}, fmt.Errorf("line too short")
+	}
+
+	timePart := cleanLine[len(cleanLine)-14:]
+	return time.Parse(TimeFormat, timePart)
 }

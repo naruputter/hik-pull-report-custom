@@ -124,7 +124,8 @@ func (c *Client) FetchEvents(startTime time.Time) ([]Event, error) {
 		// print resp json
 		respBody, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read response body: %w", err)
+			fmt.Printf("failed to read response body: %v\n", err)
+			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {

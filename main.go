@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"hik-export/internal/device"
@@ -40,28 +42,59 @@ func main() {
 	}
 
 	// 2. Load Config
-	cfgData, err := os.ReadFile(configFile)
+	cfg, err := loadConfig(configFile)
 	if err != nil {
-		log.Fatalf("Failed to load config.json: %v", err)
-	}
-	var cfg Config
-	if err := json.Unmarshal(cfgData, &cfg); err != nil {
-		log.Fatalf("Failed to parse config.json: %v", err)
-	}
-
-	if cfg.ReportFile == "" {
-		cfg.ReportFile = "report_export.txt"
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
 	// 3. Fetch Events from all devices
+	allEvents, deviceLastTimes := fetchEventsFromDevices(cfg, appState)
+	if len(allEvents) == 0 {
+		fmt.Println("No new events found from any device.")
+		return
+	}
+
+	// 4. Filter and Merge New Events (Deduplicate logs based on threshold)
+	filteredEvents := filterEvents(allEvents, cfg.MergeThresholdSeconds)
+
+	// 5. Sync with Existing Report File (Load, Merge, Sort, Deduplicate, Overwrite)
+	if err := syncReportFile(cfg.ReportFile, filteredEvents); err != nil {
+		log.Fatalf("Failed to sync report file: %v", err)
+	}
+
+	// 6. Update and Save State
+	updateState(appState, allEvents, deviceLastTimes)
+	if err := state.SaveState(stateFile, appState); err != nil {
+		log.Fatalf("Failed to save state: %v", err)
+	}
+
+	fmt.Printf("Successfully processed %d events (%d merged). Report updated: %s\n",
+		len(allEvents), len(allEvents)-len(filteredEvents), cfg.ReportFile)
+}
+
+func loadConfig(path string) (*Config, error) {
+	cfgData, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := json.Unmarshal(cfgData, &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.ReportFile == "" {
+		cfg.ReportFile = "report_export.txt"
+	}
+	return &cfg, nil
+}
+
+func fetchEventsFromDevices(cfg *Config, appState *state.AppState) ([]device.Event, map[string]time.Time) {
 	var allEvents []device.Event
 	deviceLastTimes := make(map[string]time.Time)
 
 	for _, devCfg := range cfg.Devices {
 		client := device.NewClient(devCfg.URL, devCfg.Username, devCfg.Password)
 
-		// Get last fetch time for this specific device
-		lastTime := time.Now().Add(-24 * time.Hour) // Default
+		lastTime := time.Now().Add(-24 * time.Hour) // Default fallback
 		if ds, ok := appState.DeviceStates[devCfg.URL]; ok {
 			lastTime = ds.LastFetchTime
 		}
@@ -76,23 +109,21 @@ func main() {
 		deviceLastTimes[devCfg.URL] = lastTime
 	}
 
-	if len(allEvents) == 0 {
-		fmt.Println("No new events found from any device.")
-		return
-	}
-
-	// 4. Sort Events by Time
+	// Initial sort of fetched events by time
 	sort.Slice(allEvents, func(i, j int) bool {
 		ti, _ := time.Parse(time.RFC3339, allEvents[i].Time)
 		tj, _ := time.Parse(time.RFC3339, allEvents[j].Time)
 		return ti.Before(tj)
 	})
 
-	// 5. Deduplicate / Merge logs based on threshold
-	var filteredEvents []device.Event
+	return allEvents, deviceLastTimes
+}
+
+func filterEvents(events []device.Event, threshold int) []device.Event {
+	var filtered []device.Event
 	lastProcessedByEmployee := make(map[string]time.Time)
 
-	for _, event := range allEvents {
+	for _, event := range events {
 		if event.EmployeeNoString == "" {
 			continue
 		}
@@ -104,38 +135,95 @@ func main() {
 		}
 
 		lastTime, exists := lastProcessedByEmployee[event.EmployeeNoString]
-		if exists && eventTime.Sub(lastTime).Seconds() < float64(cfg.MergeThresholdSeconds) {
-			// Skip this event as it's within the threshold of the previous one for the same employee
+		if exists && eventTime.Sub(lastTime).Seconds() < float64(threshold) {
 			continue
 		}
 
-		filteredEvents = append(filteredEvents, event)
+		filtered = append(filtered, event)
 		lastProcessedByEmployee[event.EmployeeNoString] = eventTime
+	}
+	return filtered
+}
 
-		// Update device's last processed time in appState
-		// Note: we can't easily know which device this came from without modifying Event struct,
-		// but we can just update all device states to the latest event time we've seen if we want,
-		// OR we can add a DeviceURL field to the Event struct.
-		// Let's add DeviceURL to the Event struct to be more precise.
+type reportEntry struct {
+	time time.Time
+	line string
+}
+
+func syncReportFile(reportFile string, newEvents []device.Event) error {
+	var finalEntries []reportEntry
+
+	// A. Load existing entries
+	existingData, err := os.ReadFile(reportFile)
+	if err == nil {
+		lines := strings.Split(string(existingData), "\n")
+		for _, l := range lines {
+			if strings.TrimSpace(l) == "" {
+				continue
+			}
+			t, err := report.ParseLineToTime(l)
+			if err != nil {
+				log.Printf("Warning: skipping invalid report line: %s", l)
+				continue
+			}
+			finalEntries = append(finalEntries, reportEntry{time: t, line: l + "\n"})
+		}
 	}
 
-	// 6. Append to Report File
-	f, err := os.OpenFile(cfg.ReportFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// B. Add new events
+	for _, event := range newEvents {
+		line := report.EventToText(event)
+		if line == "" {
+			continue
+		}
+		t, _ := report.ParseLineToTime(line)
+		finalEntries = append(finalEntries, reportEntry{time: t, line: line})
+	}
+
+	// C. Sort all entries by time
+	sort.SliceStable(finalEntries, func(i, j int) bool {
+		return finalEntries[i].time.Before(finalEntries[j].time)
+	})
+
+	// D. Deduplicate identical lines
+	if len(finalEntries) > 0 {
+		uniqueEntries := make([]reportEntry, 0, len(finalEntries))
+		seen := make(map[string]bool)
+		for _, entry := range finalEntries {
+			if !seen[entry.line] {
+				uniqueEntries = append(uniqueEntries, entry)
+				seen[entry.line] = true
+			}
+		}
+		finalEntries = uniqueEntries
+	}
+
+	// E. Overwrite Report File
+	// Ensure the directory exists
+	dir := filepath.Dir(reportFile)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create report directory: %w", err)
+		}
+	}
+
+	f, err := os.OpenFile(reportFile, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Failed to open report file: %v", err)
+		return err
 	}
 	defer f.Close()
 
-	for _, event := range filteredEvents {
-		line := report.EventToText(event)
-		if _, err := f.WriteString(line); err != nil {
-			log.Printf("Error writing event: %v", err)
-			continue
+	for _, entry := range finalEntries {
+		if _, err := f.WriteString(entry.line); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	// 7. Update State - track the latest time for each device from all fetched events
-	for _, event := range allEvents {
+func updateState(appState *state.AppState, allFetchedEvents []device.Event, deviceLastTimes map[string]time.Time) {
+	// Track the latest time for each device from all fetched events
+	for _, event := range allFetchedEvents {
 		eventTime, err := time.Parse(time.RFC3339, event.Time)
 		if err != nil {
 			continue
@@ -152,11 +240,4 @@ func main() {
 			LastFetchTime: lastTime,
 		}
 	}
-
-	if err := state.SaveState(stateFile, appState); err != nil {
-		log.Fatalf("Failed to save state: %v", err)
-	}
-
-	fmt.Printf("Successfully processed %d events (%d merged). Logs exported to %s\n",
-		len(allEvents), len(allEvents)-len(filteredEvents), cfg.ReportFile)
 }

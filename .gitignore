@@ -29,6 +29,7 @@ state.json
 
 # Output reports
 report_export.txt
+exports/
 
 # IDEs and Editors
 .vscode/
