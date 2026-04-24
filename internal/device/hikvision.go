@@ -109,6 +109,8 @@ func (c *Client) FetchEvents(startTime time.Time) ([]Event, error) {
 			return nil, fmt.Errorf("failed to marshal request: %w", err)
 		}
 
+		fmt.Println(string(jsonData))
+
 		reqURL := fmt.Sprintf("%s/ISAPI/AccessControl/AcsEvent?format=json", c.BaseURL)
 		req, err := http.NewRequest("POST", reqURL, bytes.NewBuffer(jsonData))
 		if err != nil {

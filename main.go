@@ -57,9 +57,9 @@ func main() {
 	// 4. Filter and Merge New Events (Deduplicate logs based on threshold)
 	filteredEvents := filterEvents(allEvents, cfg.MergeThresholdSeconds)
 
-	// 5. Sync with Existing Report File (Load, Merge, Sort, Deduplicate, Overwrite)
-	if err := syncReportFile(cfg.ReportFile, filteredEvents); err != nil {
-		log.Fatalf("Failed to sync report file: %v", err)
+	// 5. Group events by Month/Year and Sync to separate files
+	if err := syncEventsToMonthlyFiles(cfg.ReportFile, filteredEvents); err != nil {
+		log.Fatalf("Failed to sync report files: %v", err)
 	}
 
 	// 6. Update and Save State
@@ -68,8 +68,34 @@ func main() {
 		log.Fatalf("Failed to save state: %v", err)
 	}
 
-	fmt.Printf("Successfully processed %d events (%d merged). Report updated: %s\n",
-		len(allEvents), len(allEvents)-len(filteredEvents), cfg.ReportFile)
+	fmt.Printf("Successfully processed %d events (%d merged).\n",
+		len(allEvents), len(allEvents)-len(filteredEvents))
+}
+
+func syncEventsToMonthlyFiles(basePath string, events []device.Event) error {
+	// Group events by MMYYYY
+	groups := make(map[string][]device.Event)
+	for _, event := range events {
+		t, err := time.Parse(time.RFC3339, event.Time)
+		if err != nil {
+			continue
+		}
+		key := t.Format("012006") // MMYYYY
+		groups[key] = append(groups[key], event)
+	}
+
+	// For each month group, determine filename and sync
+	ext := filepath.Ext(basePath)
+	nameWithoutExt := basePath[:len(basePath)-len(ext)]
+
+	for key, groupEvents := range groups {
+		monthlyFile := fmt.Sprintf("%s_%s%s", nameWithoutExt, key, ext)
+		fmt.Printf("Updating report: %s (%d events)\n", monthlyFile, len(groupEvents))
+		if err := syncReportFile(monthlyFile, groupEvents); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func loadConfig(path string) (*Config, error) {
