@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	TimeFormat = "20060102-15:04"
+	TimeFormat = "200601021504"
 )
 
 // EventToText converts a device event into a formatted text line.
@@ -27,7 +27,7 @@ func EventToText(event device.Event) string {
 
 	formattedTime := eventTime.Format(TimeFormat)
 
-	return fmt.Sprintf("%s-%s\n",
+	return fmt.Sprintf("%s      %s\n",
 		employeeNoString,
 		formattedTime,
 	)
