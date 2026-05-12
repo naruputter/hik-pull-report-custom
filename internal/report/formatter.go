@@ -30,7 +30,7 @@ func EventToText(event device.Event) string {
 	return fmt.Sprintf("%s      %s %s\n",
 		employeeNoString,
 		formattedTime,
-		event.Name,
+		event.DeviceName,
 	)
 }
 

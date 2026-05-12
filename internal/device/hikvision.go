@@ -44,6 +44,7 @@ type Event struct {
 	CurrentVerifyMode string `json:"currentVerifyMode,omitempty"`
 	Mask              string `json:"mask,omitempty"`
 	DeviceURL         string `json:"-"` // Not from JSON, but populated by client
+	DeviceName        string `json:"deviceName,omitempty"`
 }
 
 // AcsEventResponse is the response from ISAPI
@@ -61,11 +62,12 @@ type AcsEventResponseWrapper struct {
 }
 
 type Client struct {
+	Name       string
 	BaseURL    string
 	HTTPClient *http.Client
 }
 
-func NewClient(baseURL, user, pass string) *Client {
+func NewClient(name, baseURL, user, pass string) *Client {
 	// Use Digest Authentication which is standard for Hikvision ISAPI
 	client := &http.Client{
 		Transport: &digest.Transport{
@@ -75,6 +77,7 @@ func NewClient(baseURL, user, pass string) *Client {
 		Timeout: 30 * time.Second,
 	}
 	return &Client{
+		Name:       name,
 		BaseURL:    baseURL,
 		HTTPClient: client,
 	}
@@ -145,6 +148,7 @@ func (c *Client) FetchEvents(startTime time.Time) ([]Event, error) {
 		eventResp := wrapper.AcsEvent
 		for i := range eventResp.InfoList {
 			eventResp.InfoList[i].DeviceURL = c.BaseURL
+			eventResp.InfoList[i].DeviceName = c.Name
 		}
 		allEvents = append(allEvents, eventResp.InfoList...)
 

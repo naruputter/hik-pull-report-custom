@@ -119,7 +119,7 @@ func fetchEventsFromDevices(cfg *Config, appState *state.AppState) ([]device.Eve
 	deviceLastTimes := make(map[string]time.Time)
 
 	for _, devCfg := range cfg.Devices {
-		client := device.NewClient(devCfg.URL, devCfg.Username, devCfg.Password)
+		client := device.NewClient(devCfg.Name, devCfg.URL, devCfg.Username, devCfg.Password)
 
 		lastTime := time.Now().Add(-24 * time.Hour) // Default fallback
 		if ds, ok := appState.DeviceStates[devCfg.URL]; ok {
