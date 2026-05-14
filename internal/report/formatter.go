@@ -15,8 +15,10 @@ const (
 // EventToText converts a device event into a formatted text line.
 func EventToText(event device.Event) string {
 	employeeNoString := event.EmployeeNoString
-	if employeeNoString == "" {
-		employeeNoString = "N/A"
+	if len(employeeNoString) < 4 {
+		employeeNoString = strings.Repeat("0", 4-len(employeeNoString)) + employeeNoString
+	} else if len(employeeNoString) > 4 {
+		employeeNoString = employeeNoString[:4]
 	}
 
 	eventTime, err := time.Parse(time.RFC3339, event.Time)
