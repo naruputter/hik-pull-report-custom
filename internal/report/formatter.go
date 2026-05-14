@@ -16,7 +16,7 @@ const (
 func EventToText(event device.Event) string {
 	employeeNoString := event.EmployeeNoString
 	if len(employeeNoString) < 4 {
-		employeeNoString = strings.Repeat("0", 4-len(employeeNoString)) + employeeNoString
+		return ""
 	} else if len(employeeNoString) > 4 {
 		employeeNoString = employeeNoString[:4]
 	}
