@@ -16,7 +16,7 @@ const (
 func EventToText(event device.Event) string {
 	employeeNoString := event.EmployeeNoString
 	if len(employeeNoString) < 4 {
-		return ""
+		employeeNoString = strings.Repeat("0", 4-len(employeeNoString)) + employeeNoString
 	} else if len(employeeNoString) > 4 {
 		employeeNoString = employeeNoString[:4]
 	}
@@ -37,14 +37,14 @@ func EventToText(event device.Event) string {
 }
 
 // ParseLineToTime extracts the timestamp from a report line.
-// Assumes format: [EmployeeID]-[YYYYMMDD]-[HH:MM]
+// Assumes format: [EmployeeID]      [YYYYMMDDHHMM] [DeviceName]
 func ParseLineToTime(line string) (time.Time, error) {
 	cleanLine := strings.TrimSpace(line)
-	// The time part always has a fixed length: YYYYMMDD-HH:MM = 14 chars
-	if len(cleanLine) < 14 {
-		return time.Time{}, fmt.Errorf("line too short")
+	parts := strings.Fields(cleanLine)
+	if len(parts) < 3 {
+		return time.Time{}, fmt.Errorf("invalid line format: expected at least 3 parts, got %d", len(parts))
 	}
 
-	timePart := cleanLine[len(cleanLine)-14:]
+	timePart := parts[1]
 	return time.Parse(TimeFormat, timePart)
 }
